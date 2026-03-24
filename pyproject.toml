@@ -1,0 +1,19 @@
+[project]
+name = "network-crawl"
+version = "0.1.0"
+description = "WHUT notice crawler, summarizer, and scheduled email sender"
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "playwright>=1.52.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.uv]
+package = false

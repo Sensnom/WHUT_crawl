@@ -1,0 +1,13 @@
+[Unit]
+Description=Schedule network crawl at noon and evening
+
+[Timer]
+# Replace Asia/Shanghai with the same value as .env SCHEDULE_TIMEZONE.
+Timezone=Asia/Shanghai
+OnCalendar=*-*-* 12:00:00
+OnCalendar=*-*-* 18:00:00
+Persistent=true
+Unit=network-crawl.service
+
+[Install]
+WantedBy=timers.target

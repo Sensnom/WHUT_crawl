@@ -1,0 +1,15 @@
+[Unit]
+Description=Run network crawl from project root
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Replace <PROJECT_ROOT> and <PYTHON_BIN> with absolute paths.
+# Replace <SERVICE_USER> and <SERVICE_GROUP> with the non-root account that should run the crawl.
+# Keep the ExecStart arguments quoted if either path contains spaces.
+Type=oneshot
+User=<SERVICE_USER>
+Group=<SERVICE_GROUP>
+WorkingDirectory=<PROJECT_ROOT>
+ExecStartPre=/usr/bin/mkdir -p "<PROJECT_ROOT>/output"
+ExecStart="<PYTHON_BIN>" "<PROJECT_ROOT>/main.py"
