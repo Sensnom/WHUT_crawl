@@ -155,6 +155,25 @@ def test_fetch_course_page_supports_real_login_page_selectors():
     ]
 
 
+def test_fetch_course_page_uses_login_controls_detected_from_dom_when_url_is_unexpected():
+    from course_client import CourseClient
+
+    page = FakePage(
+        "<html><body><input id='account'><input id='password'><div>待完成任务</div></body></html>",
+        url="https://whut.ai-augmented.com/app/jx-web/mycourse",
+    )
+    browser = FakeBrowser(page)
+    client = CourseClient(make_settings(), browser_factory=lambda: browser)
+
+    html = client.fetch_course_page_html()
+
+    assert "待完成任务" in html
+    assert page.fills == [
+        ("#account", "2020123456"),
+        ("#password", "secret"),
+    ]
+
+
 def test_fetch_course_page_waits_for_redirected_login_page_before_filling():
     from course_client import CourseClient
 

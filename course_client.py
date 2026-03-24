@@ -82,7 +82,7 @@ class CourseClient:
                 page.wait_for_url("**/tpass/login*", timeout=timeout_ms)
 
             username_selector, password_selector, submit_selector = (
-                self._get_login_controls(page.url)
+                self._get_login_controls(page.url, page.content())
             )
             page.fill(username_selector, self.settings.smart_whut_username)
             page.fill(password_selector, self.settings.smart_whut_password)
@@ -191,7 +191,16 @@ class CourseClient:
             return text
 
     @staticmethod
-    def _get_login_controls(url: str) -> tuple[str, str, str]:
+    def _get_login_controls(url: str, html: str = "") -> tuple[str, str, str]:
+        normalized_html = html.lower()
+        if "id='un'" in normalized_html or 'id="un"' in normalized_html:
+            return (
+                UNIFIED_USERNAME_SELECTOR,
+                UNIFIED_PASSWORD_SELECTOR,
+                UNIFIED_SUBMIT_SELECTOR,
+            )
+        if "id='account'" in normalized_html or 'id="account"' in normalized_html:
+            return "#account", "#password", "button[type='submit']"
         if UNIFIED_LOGIN_URL_MARKER in url:
             return (
                 UNIFIED_USERNAME_SELECTOR,
