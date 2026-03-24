@@ -4,7 +4,7 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-# Replace /home/Sparkle/programming/python_profiles/network_crawl and /home/Sparkle/programming/python_profiles/network_crawl/.venv/bin/python3 with absolute paths.
+# Replace /home/Sparkle/programming/python_profiles/network_crawl and /home/Sparkle/programming/python_profiles/network_crawl/.venv/bin/python with absolute paths.
 # Replace Sparkle and wheel with the non-root account that should run the crawl.
 # Keep the ExecStart arguments quoted if either path contains spaces.
 Type=oneshot
@@ -12,4 +12,4 @@ User=Sparkle
 Group=wheel
 WorkingDirectory=/home/Sparkle/programming/python_profiles/network_crawl
 ExecStartPre=/usr/bin/mkdir -p "/home/Sparkle/programming/python_profiles/network_crawl/output"
-ExecStart="/home/Sparkle/programming/python_profiles/network_crawl/.venv/bin/python3" "/home/Sparkle/programming/python_profiles/network_crawl/main.py"
+ExecStart="/home/Sparkle/programming/python_profiles/network_crawl/.venv/bin/python" "/home/Sparkle/programming/python_profiles/network_crawl/main.py"
