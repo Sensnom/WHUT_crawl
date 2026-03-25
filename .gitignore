@@ -7,4 +7,5 @@ output/*.md
 output/cron.log
 output/*.json
 opencode.json
+output/systemd/*
 
