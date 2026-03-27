@@ -391,6 +391,9 @@ def run_news_mode(runtime: Runtime | None = None) -> int:
 def process_course_run(runtime: Runtime) -> None:
     target_date = runtime.now.replace(hour=0, minute=0, second=0, microsecond=0)
     course_task_slot = runtime.run_slot or "manual"
+    print(
+        f"[WORKFLOW_TRACE] process_course_run now={runtime.now.isoformat()} run_slot={runtime.run_slot!r} retried_slots={sorted(runtime.retried_slots)!r}"
+    )
     process_course_task_delivery(
         runtime.settings,
         runtime.store,
@@ -400,8 +403,12 @@ def process_course_run(runtime: Runtime) -> None:
 
 
 def process_news_run(runtime: Runtime) -> None:
+    print(
+        f"[WORKFLOW_TRACE] process_news_run now={runtime.now.isoformat()} run_slot={runtime.run_slot!r} retried_slots={sorted(runtime.retried_slots)!r}"
+    )
     if runtime.run_slot == "noon":
         if "noon" in runtime.retried_slots:
+            print("[WORKFLOW_TRACE] skip_noon_news because noon already retried")
             return
         process_news_delivery_safely(
             runtime.settings, runtime.store, runtime.now, "noon"
@@ -409,6 +416,7 @@ def process_news_run(runtime: Runtime) -> None:
         return
     if runtime.run_slot == "evening":
         if "evening" in runtime.retried_slots:
+            print("[WORKFLOW_TRACE] skip_evening_news because evening already retried")
             return
         process_news_delivery_safely(
             runtime.settings, runtime.store, runtime.now, "evening"

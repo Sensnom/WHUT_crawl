@@ -1,6 +1,8 @@
 from datetime import datetime
 from email.message import EmailMessage
+from email.utils import make_msgid
 from html import escape
+from pathlib import Path
 import smtplib
 import ssl
 import re
@@ -8,6 +10,14 @@ import re
 from config import Settings
 from course_parser import CourseTask
 from models import NoticeItem
+
+
+def append_email_diagnostic_log(output_dir: str, message: str) -> None:
+    log_path = Path(output_dir) / "email_diagnostics.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.write(f"[{timestamp}] {message}\n")
 
 
 def build_email_subject(
@@ -268,9 +278,19 @@ def send_email(
     msg["From"] = settings.smtp_user
     msg["To"] = settings.email_to
     msg["Subject"] = subject
+    msg["Message-ID"] = make_msgid(domain=settings.smtp_host)
     msg.set_content(body)
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+
+    message_id = msg["Message-ID"]
+    append_email_diagnostic_log(
+        settings.output_dir,
+        (
+            f"send_email:start subject={subject!r} to={settings.email_to!r} "
+            f"message_id={message_id!r} html={'yes' if html_body else 'no'}"
+        ),
+    )
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as smtp:
         smtp.ehlo()
@@ -278,3 +298,9 @@ def send_email(
         smtp.ehlo()
         smtp.login(settings.smtp_user, settings.smtp_app_password)
         smtp.send_message(msg)
+
+    append_email_diagnostic_log(
+        settings.output_dir,
+        f"send_email:done subject={subject!r} message_id={message_id!r}",
+    )
+    print(f"[EMAIL_TRACE] subject={subject} | message_id={message_id}")
