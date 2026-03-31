@@ -5,4 +5,7 @@ __pycache__/
 *.pyc
 output/*.md
 output/cron.log
-output/email_delivery_state.json
+output/*.json
+opencode.json
+output/systemd/*
+

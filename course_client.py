@@ -71,6 +71,11 @@ class CourseClient:
                 if html is not None:
                     self._save_auth_state(page, auth_state_path)
                     return html
+                else:
+                    print("DEBUG: _try_fetch_with_cached_auth_state returned None")
+                    print("DEBUG: page.url:", page.url)
+                    with open("debug_page.html", "w") as f:
+                        f.write(page.content())
             if not any(marker in page.url for marker in LOGIN_URL_MARKERS):
                 try:
                     page.wait_for_url(LOGIN_URL_PATTERN, timeout=timeout_ms)
@@ -127,6 +132,13 @@ class CourseClient:
 
     @classmethod
     def _fetch_pending_task_html(self, page, timeout_ms: int) -> str:
+        try:
+            page.wait_for_selector(
+                PENDING_TASK_TRIGGER_SELECTOR, timeout=min(timeout_ms, 15000)
+            )
+        except Exception:
+            return page.content()
+
         with page.expect_response(
             lambda response: PENDING_TASK_API_PATH in response.url,
             timeout=timeout_ms,
@@ -140,8 +152,8 @@ class CourseClient:
         return page.content()
 
     def _try_fetch_with_cached_auth_state(self, page, timeout_ms: int) -> str | None:
-        if self._has_course_task_entry(page.content()):
-            return self._fetch_pending_task_html(page, timeout_ms)
+        if self._is_login_url(page.url):
+            return None
 
         try:
             page.wait_for_function(
@@ -151,17 +163,31 @@ class CourseClient:
                   const text = document.body?.innerText || '';
                   return html.includes('data-xy-click-pt="unstudy-task"') ||
                     text.includes('待完成任务') ||
-                    window.location.href.includes('/login')
+                    window.location.href.includes('/login') ||
+                    document.querySelector('.aia_course_card') !== null
                 }
                 """,
-                timeout=min(timeout_ms, AUTH_STATE_COURSE_WAIT_MS),
+                timeout=min(timeout_ms, 15000),
             )
         except Exception:
+            pass
+
+        if self._is_login_url(page.url):
             return None
 
         if self._has_course_task_entry(page.content()):
             return self._fetch_pending_task_html(page, timeout_ms)
-        return None
+
+        # If we are not on a login page, we are logged in but might not have tasks
+        return page.content()
+
+    @staticmethod
+    def _is_login_url(url: str) -> bool:
+        normalized_url = url.lower()
+        return (
+            any(marker.lower() in normalized_url for marker in LOGIN_URL_MARKERS)
+            or "/login" in normalized_url
+        )
 
     def _get_auth_state_path(self) -> Path:
         return Path(self.settings.output_dir) / "playwright_auth_state.json"
@@ -173,7 +199,11 @@ class CourseClient:
 
     @staticmethod
     def _has_course_task_entry(html: str) -> bool:
-        return 'data-xy-click-pt="unstudy-task"' in html or "task-item" in html
+        return (
+            'data-xy-click-pt="unstudy-task"' in html
+            or "task-item" in html
+            or "aia_course_card" in html
+        )
 
     @staticmethod
     def _has_rendered_course_marker(html: str) -> bool:

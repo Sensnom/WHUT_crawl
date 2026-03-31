@@ -23,6 +23,9 @@ def process_news_delivery_safely(
     print_fn: Callable[[str], None] = print,
 ) -> None:
     target_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    print_fn(
+        f"[NEWS_TRACE] safe_delivery slot={slot} now={now.isoformat()} target_date={target_date.date().isoformat()}"
+    )
 
     try:
         if slot == "evening":
@@ -66,6 +69,9 @@ def process_noon_delivery(
 ) -> int:
     target_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
     existing = store.get_record(target_date.date().isoformat(), "noon")
+    print_fn(
+        f"[NEWS_TRACE] enter_noon now={now.isoformat()} existing={existing!r}"
+    )
     if existing and bool(existing.get("email_sent")):
         print_fn("当天中午邮件已成功发送，跳过重复发送")
         return 0
@@ -78,6 +84,9 @@ def process_noon_delivery(
     )
     output = write_summary_file_fn(markdown, settings.output_dir, target_date)
     subject = build_email_subject_fn(settings.target_source, target_date, "noon")
+    print_fn(
+        f"[NEWS_TRACE] noon_send subject={subject!r} notices={len(notice_urls)} output={str(output)!r}"
+    )
 
     try:
         send_email_fn(settings, subject, body, html)
@@ -121,6 +130,9 @@ def process_evening_delivery(
 ) -> int:
     target_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
     existing = store.get_record(target_date.date().isoformat(), "evening")
+    print_fn(
+        f"[NEWS_TRACE] enter_evening now={now.isoformat()} existing={existing!r}"
+    )
     if existing and bool(existing.get("email_sent")):
         print_fn("当天晚间邮件已成功发送，跳过重复发送")
         return 0
@@ -156,6 +168,9 @@ def process_evening_delivery(
         "evening",
     )
     subject = build_email_subject_fn(settings.target_source, target_date, "evening")
+    print_fn(
+        f"[NEWS_TRACE] evening_send subject={subject!r} notices={len(notice_urls)} output={str(evening_output)!r}"
+    )
 
     try:
         send_email_fn(settings, subject, body, html)

@@ -83,9 +83,16 @@ def process_course_task_delivery(
     artifact_path = get_course_task_artifact_path_fn(
         settings.output_dir, target_date, slot
     )
+    existing = store.get_record(target_date.date().isoformat(), course_slot)
+    print_fn(
+        f"[COURSE_TRACE] enter slot={slot} course_slot={course_slot} target_date={target_date.date().isoformat()} existing={existing!r}"
+    )
 
     try:
         subject, body, html = send_course_task_email_fn(settings, target_date, slot)
+        print_fn(
+            f"[COURSE_TRACE] send subject={subject!r} artifact={str(artifact_path)!r}"
+        )
         artifact_path = write_course_task_artifact_fn(
             settings.output_dir,
             subject,
