@@ -43,35 +43,97 @@ def build_course_task_email_body(tasks: list[CourseTask]) -> str:
     if not tasks:
         return "今日没有待完成任务"
 
+    xiaoya_tasks = [t for t in tasks if t.source_platform == "xiaoya"]
+    chaoxing_assignments = [
+        t
+        for t in tasks
+        if t.source_platform == "chaoxing" and t.task_type == "assignment"
+    ]
+    chaoxing_exams = [
+        t for t in tasks if t.source_platform == "chaoxing" and t.task_type == "exam"
+    ]
+
     lines = ["今日课程待完成任务", ""]
-    for task in tasks:
-        lines.extend(
-            [
-                f"课程：{task.course_name}",
-                f"任务：{task.title}",
-                f"截止：{task.deadline_text}",
-                "",
-            ]
-        )
+
+    if xiaoya_tasks:
+        lines.append("## 小雅课程任务")
+        for task in xiaoya_tasks:
+            lines.extend(
+                [
+                    f"课程：{task.course_name}",
+                    f"任务：{task.title}",
+                    f"截止：{task.deadline_text}",
+                    "",
+                ]
+            )
+
+    if chaoxing_assignments:
+        lines.append("## 超星学习通 / 作业")
+        for task in chaoxing_assignments:
+            lines.extend(
+                [
+                    f"课程：{task.course_name}",
+                    f"任务：{task.title}",
+                    f"截止：{task.deadline_text}",
+                    "",
+                ]
+            )
+
+    if chaoxing_exams:
+        lines.append("## 超星学习通 / 考试")
+        for task in chaoxing_exams:
+            lines.extend(
+                [
+                    f"课程：{task.course_name}",
+                    f"任务：{task.title}",
+                    f"截止：{task.deadline_text}",
+                    "",
+                ]
+            )
+
     return "\n".join(lines).strip()
 
 
 def build_course_task_email_html(tasks: list[CourseTask]) -> str:
     if not tasks:
-        items = "<p>今日没有待完成任务</p>"
-    else:
-        items = "".join(
-            (
-                "<li>"
-                f"<strong>{escape(task.course_name)}</strong> - {escape(task.title)}"
-                f"<div>截止：{escape(task.deadline_text)}</div>"
-                "</li>"
-            )
-            for task in tasks
+        return (
+            "<html><body><h1>课程任务提醒</h1><p>今日没有待完成任务</p></body></html>"
         )
-        items = f"<ul>{items}</ul>"
 
-    return f"<html><body><h1>课程任务提醒</h1>{items}</body></html>"
+    sections: list[str] = []
+
+    xiaoya_tasks = [t for t in tasks if t.source_platform == "xiaoya"]
+    chaoxing_assignments = [
+        t
+        for t in tasks
+        if t.source_platform == "chaoxing" and t.task_type == "assignment"
+    ]
+    chaoxing_exams = [
+        t for t in tasks if t.source_platform == "chaoxing" and t.task_type == "exam"
+    ]
+
+    if xiaoya_tasks:
+        items = "".join(
+            f"<li><strong>{escape(t.course_name)}</strong> - {escape(t.title)}<div>截止：{escape(t.deadline_text)}</div></li>"
+            for t in xiaoya_tasks
+        )
+        sections.append(f"<h2>小雅课程任务</h2><ul>{items}</ul>")
+
+    if chaoxing_assignments:
+        items = "".join(
+            f"<li><strong>{escape(t.course_name)}</strong> - {escape(t.title)}<div>截止：{escape(t.deadline_text)}</div></li>"
+            for t in chaoxing_assignments
+        )
+        sections.append(f"<h2>超星学习通 / 作业</h2><ul>{items}</ul>")
+
+    if chaoxing_exams:
+        items = "".join(
+            f"<li><strong>{escape(t.course_name)}</strong> - {escape(t.title)}<div>截止：{escape(t.deadline_text)}</div></li>"
+            for t in chaoxing_exams
+        )
+        sections.append(f"<h2>超星学习通 / 考试</h2><ul>{items}</ul>")
+
+    return f"<html><body><h1>课程任务提醒</h1>{''.join(sections)}</body></html>"
 
 
 def build_email_body(

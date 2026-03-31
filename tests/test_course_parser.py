@@ -16,3 +16,5 @@ def test_parse_pending_course_tasks_extracts_title_course_and_deadline():
     assert tasks[0].course_name == "高等数学"
     assert tasks[0].title == "作业 3"
     assert tasks[0].deadline_text == "2026-03-21 23:59"
+    assert tasks[0].source_platform == "xiaoya"
+    assert tasks[0].task_type == "task"

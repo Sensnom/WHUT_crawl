@@ -110,6 +110,10 @@ class Settings:
     chaoxing_password: str = ""
     chaoxing_target_course_names: list[str] = field(default_factory=list)
     enable_chaoxing_service: bool = True
+    mooc_email: str = ""
+    mooc_password: str = ""
+    mooc_target_course_names: list[str] = field(default_factory=list)
+    enable_mooc_service: bool = True
 
     @classmethod
     def from_env(cls, *, validate: bool = True) -> "Settings":
@@ -169,6 +173,16 @@ class Settings:
             ],
             enable_chaoxing_service=parse_bool_env(
                 "ENABLE_CHAOXING_SERVICE", os.getenv("ENABLE_CHAOXING_SERVICE", "true")
+            ),
+            mooc_email=os.getenv("MOOC_EMAIL", "").strip(),
+            mooc_password=os.getenv("MOOC_PASSWORD", "").strip(),
+            mooc_target_course_names=[
+                s.strip()
+                for s in os.getenv("MOOC_TARGET_COURSE_NAMES", "").split(",")
+                if s.strip()
+            ],
+            enable_mooc_service=parse_bool_env(
+                "ENABLE_MOOC_SERVICE", os.getenv("ENABLE_MOOC_SERVICE", "true")
             ),
         )
         if validate:

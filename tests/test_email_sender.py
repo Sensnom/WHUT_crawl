@@ -262,3 +262,41 @@ def test_build_backfill_subject_formats_date_range():
     subject = build_backfill_subject("本科生院", "2026-03-12", "2026-03-18")
 
     assert subject == "WHUT 本科生院通知补发 2026-03-12 至 2026-03-18"
+
+
+def test_build_course_task_email_body_groups_tasks_by_platform_and_type():
+    from course_parser import CourseTask
+    from email_sender import build_course_task_email_body
+
+    tasks = [
+        CourseTask(
+            title="小雅作业",
+            course_name="高数",
+            deadline_text="2026-03-25 23:59",
+            source_platform="xiaoya",
+            task_type="task",
+        ),
+        CourseTask(
+            title="超星作业",
+            course_name="大物",
+            deadline_text="2026-03-26 23:59",
+            source_platform="chaoxing",
+            task_type="assignment",
+        ),
+        CourseTask(
+            title="超星考试",
+            course_name="大物",
+            deadline_text="2026-03-27 23:59",
+            source_platform="chaoxing",
+            task_type="exam",
+        ),
+    ]
+
+    body = build_course_task_email_body(tasks)
+
+    assert "小雅课程任务" in body
+    assert "超星学习通 / 作业" in body
+    assert "超星学习通 / 考试" in body
+    assert "小雅作业" in body
+    assert "超星作业" in body
+    assert "超星考试" in body

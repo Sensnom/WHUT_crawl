@@ -40,6 +40,8 @@ from services.course_service import (
     send_course_task_email as send_course_task_email_service,
     write_course_task_artifact as write_course_task_artifact_service,
 )
+from chaoxing_client import ChaoxingClient
+from mooc_client import MoocClient
 from services.news_service import (
     process_evening_delivery as process_evening_delivery_service,
     process_news_delivery_safely as process_news_delivery_safely_service,
@@ -126,7 +128,13 @@ def collect_source_notices(settings: Settings) -> list[NoticeItem]:
 
 
 def fetch_course_tasks(settings: Settings) -> list[CourseTask]:
-    return fetch_course_tasks_service(settings, course_client_factory=CourseClient)
+    tasks, _warnings = fetch_course_tasks_service(
+        settings,
+        course_client_factory=CourseClient,
+        chaoxing_client_factory=ChaoxingClient,
+        mooc_client_factory=MoocClient,
+    )
+    return tasks
 
 
 def send_course_task_email(

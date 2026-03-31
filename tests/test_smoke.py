@@ -84,3 +84,12 @@ def test_readme_documents_manage_systemd_commands():
     assert "manage_systemd.py --render" in readme
     assert "manage_systemd.py --install" in readme
     assert "manage_systemd.py --uninstall" in readme
+
+
+def test_readme_documents_chaoxing_course_task_settings():
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "CHAOXING_USERNAME" in readme
+    assert "CHAOXING_TARGET_COURSE_NAMES" in readme
+    assert "超星学习通" in readme
+    assert "30 天内截止" in readme

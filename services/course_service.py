@@ -8,18 +8,98 @@ from course_parser import CourseTask, parse_pending_course_tasks
 from delivery_state import DeliveryStateStore
 from typing import Callable
 
+try:
+    from chaoxing_client import ChaoxingClient
+except ImportError:
+    ChaoxingClient = None
+
+try:
+    from mooc_client import MoocClient
+except ImportError:
+    MoocClient = None
+
 
 def fetch_course_tasks(
     settings: Settings,
     *,
     course_client_factory: Callable[[Settings], CourseClient] = CourseClient,
-) -> list[CourseTask]:
-    if not settings.smart_whut_username or not settings.smart_whut_password:
-        return []
+    chaoxing_client_factory: Callable[[Settings], "ChaoxingClient"] | None = None,
+    mooc_client_factory: Callable[[Settings], "MoocClient"] | None = None,
+) -> tuple[list[CourseTask], list[str]]:
+    warnings: list[str] = []
+    all_tasks: list[CourseTask] = []
 
-    client = course_client_factory(settings)
-    html = client.fetch_course_page_html()
-    return parse_pending_course_tasks(html)
+    xiaoya_tasks, xiaoya_warning = _fetch_xiaoya_tasks(settings, course_client_factory)
+    all_tasks.extend(xiaoya_tasks)
+    if xiaoya_warning:
+        warnings.append(xiaoya_warning)
+
+    if chaoxing_client_factory is not None and ChaoxingClient is not None:
+        chaoxing_tasks, chaoxing_warnings = _fetch_chaoxing_tasks(
+            settings, chaoxing_client_factory
+        )
+        all_tasks.extend(chaoxing_tasks)
+        warnings.extend(chaoxing_warnings)
+
+    if mooc_client_factory is not None and MoocClient is not None:
+        mooc_tasks, mooc_warnings = _fetch_mooc_tasks(settings, mooc_client_factory)
+        all_tasks.extend(mooc_tasks)
+        warnings.extend(mooc_warnings)
+
+    all_tasks.sort(key=lambda t: t.deadline_at or datetime.max)
+    return all_tasks, warnings
+
+
+def _fetch_xiaoya_tasks(
+    settings: Settings,
+    course_client_factory: Callable[[Settings], CourseClient],
+) -> tuple[list[CourseTask], str]:
+    if not settings.smart_whut_username or not settings.smart_whut_password:
+        return [], ""
+
+    try:
+        client = course_client_factory(settings)
+        html = client.fetch_course_page_html()
+        return parse_pending_course_tasks(html), ""
+    except Exception as exc:
+        return [], f"小雅课程任务爬取失败: {exc}"
+
+
+def _fetch_chaoxing_tasks(
+    settings: Settings,
+    chaoxing_client_factory: Callable[[Settings], "ChaoxingClient"],
+) -> tuple[list[CourseTask], list[str]]:
+    if (
+        not settings.enable_chaoxing_service
+        or not settings.chaoxing_username
+        or not settings.chaoxing_password
+        or not settings.chaoxing_target_course_names
+    ):
+        return [], []
+
+    try:
+        client = chaoxing_client_factory(settings)
+        return client.fetch_pending_tasks()
+    except Exception as exc:
+        return [], [f"超星学习通任务爬取失败: {exc}"]
+
+
+def _fetch_mooc_tasks(
+    settings: Settings,
+    mooc_client_factory: Callable[[Settings], "MoocClient"],
+) -> tuple[list[CourseTask], list[str]]:
+    if (
+        not settings.enable_mooc_service
+        or not settings.mooc_email
+        or not settings.mooc_password
+    ):
+        return [], []
+
+    try:
+        client = mooc_client_factory(settings)
+        return client.fetch_pending_tasks()
+    except Exception as exc:
+        return [], [f"MOOC课程任务爬取失败: {exc}"]
 
 
 def send_course_task_email(

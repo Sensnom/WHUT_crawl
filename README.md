@@ -54,6 +54,10 @@ BACKFILL_MAX_DAYS=7
 STATE_RETENTION_DAYS=15
 ENABLE_NEWS_SERVICE=true
 ENABLE_COURSE_SERVICE=true
+CHAOXING_USERNAME=your_chaoxing_phone_or_id
+CHAOXING_PASSWORD=your_chaoxing_password
+CHAOXING_TARGET_COURSE_NAMES=高数,大学物理
+ENABLE_CHAOXING_SERVICE=true
 ```
 
 如果你以后想改成别的发布单位，可以修改 `TARGET_SOURCE`。
@@ -64,6 +68,9 @@ ENABLE_COURSE_SERVICE=true
 `BACKFILL_MAX_DAYS` 控制最多补发多少天，`STATE_RETENTION_DAYS` 控制状态文件和日志清理周期。
 `ENABLE_NEWS_SERVICE` 用来控制新闻服务总开关；设为 `false` 时会一起关闭新闻发送、失败重试和补发。
 `ENABLE_COURSE_SERVICE` 用来控制课程任务服务总开关；设为 `false` 时不会发送课程任务邮件。
+`CHAOXING_USERNAME` 和 `CHAOXING_PASSWORD` 用于登录超星学习通平台（`https://i.chaoxing.com/base?ws=1`）。
+`CHAOXING_TARGET_COURSE_NAMES` 为逗号分隔的课程名称列表，只爬取这些课程的未完成作业和未完成考试；留空则跳过超星爬取。
+`ENABLE_CHAOXING_SERVICE` 设为 `false` 可完全关闭超星学习通任务爬取。
 
 ### Gmail App Password
 
@@ -91,9 +98,10 @@ uv run python main.py
 - 若最近最多 `7` 天存在漏发，会聚合成一封补发邮件
 
 课程任务邮件说明：
-- 第二封邮件来自 Smart WHUT `mycourse` 页面中的待完成任务列表
+- 第二封邮件合并了 Smart WHUT 待完成任务和小雅作业（来自小雅课程平台），以及超星学习通的未完成作业和未完成考试（仅限 30 天内截止）
+- 邮件正文按来源平台分组展示：小雅课程任务、超星学习通 / 作业、超星学习通 / 考试
 - 邮件会尽量展示课程名、任务标题和截止时间
-- 即使当天没有任务，也会发送一封写明“今日没有待完成任务”的课程任务邮件
+- 即使当天没有任务，也会发送一封写明"今日没有待完成任务"的课程任务邮件
 - 新闻摘要邮件与课程任务邮件会分别记录发送状态，互不影响重试和去重
 - 首次部署到 cron 或服务器机器时，也要先执行 `uv run playwright install chromium`，否则课程任务分支无法启动浏览器
 

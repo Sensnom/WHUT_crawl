@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from bs4 import BeautifulSoup
@@ -11,6 +11,8 @@ class CourseTask:
     deadline_text: str
     deadline_at: datetime | None = None
     url: str = ""
+    source_platform: str = "xiaoya"
+    task_type: str = "task"
 
 
 def parse_pending_course_tasks(html: str) -> list[CourseTask]:
@@ -30,6 +32,8 @@ def parse_pending_course_tasks(html: str) -> list[CourseTask]:
                 title=title.get_text(strip=True),
                 course_name=course_name.get_text(strip=True),
                 deadline_text=deadline_text,
+                source_platform="xiaoya",
+                task_type="task",
             )
         )
 

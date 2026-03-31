@@ -39,7 +39,13 @@ def test_fetch_course_tasks_skips_client_without_credentials(tmp_path: Path):
     def unexpected_factory(_settings: Settings):
         raise AssertionError("client should not be created without credentials")
 
-    assert fetch_course_tasks(settings, course_client_factory=unexpected_factory) == []
+    tasks, warnings = fetch_course_tasks(
+        settings,
+        course_client_factory=unexpected_factory,
+        chaoxing_client_factory=None,
+    )
+    assert tasks == []
+    assert warnings == []
 
 
 def test_send_course_task_email_builds_and_sends_expected_content(tmp_path: Path):
