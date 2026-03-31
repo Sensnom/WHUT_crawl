@@ -186,3 +186,18 @@ def test_settings_can_validate_healthcheck_without_mail_credentials(monkeypatch)
     settings = Settings.from_env()
 
     Settings.validate_for_mode(settings, "healthcheck")
+
+
+def test_settings_reads_chaoxing_fields(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("CHAOXING_USERNAME", "13800000000")
+    monkeypatch.setenv("CHAOXING_PASSWORD", "secret")
+    monkeypatch.setenv("CHAOXING_TARGET_COURSE_NAMES", "高数, 大学物理 ")
+    monkeypatch.setenv("ENABLE_CHAOXING_SERVICE", "true")
+
+    settings = Settings.from_env()
+
+    assert settings.chaoxing_username == "13800000000"
+    assert settings.chaoxing_password == "secret"
+    assert settings.chaoxing_target_course_names == ["高数", "大学物理"]
+    assert settings.enable_chaoxing_service is True

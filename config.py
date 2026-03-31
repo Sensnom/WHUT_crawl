@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -106,6 +106,10 @@ class Settings:
     state_retention_days: int = 15
     enable_news_service: bool = True
     enable_course_service: bool = True
+    chaoxing_username: str = ""
+    chaoxing_password: str = ""
+    chaoxing_target_course_names: list[str] = field(default_factory=list)
+    enable_chaoxing_service: bool = True
 
     @classmethod
     def from_env(cls, *, validate: bool = True) -> "Settings":
@@ -155,6 +159,16 @@ class Settings:
             ),
             enable_course_service=parse_bool_env(
                 "ENABLE_COURSE_SERVICE", os.getenv("ENABLE_COURSE_SERVICE", "true")
+            ),
+            chaoxing_username=os.getenv("CHAOXING_USERNAME", "").strip(),
+            chaoxing_password=os.getenv("CHAOXING_PASSWORD", "").strip(),
+            chaoxing_target_course_names=[
+                s.strip()
+                for s in os.getenv("CHAOXING_TARGET_COURSE_NAMES", "").split(",")
+                if s.strip()
+            ],
+            enable_chaoxing_service=parse_bool_env(
+                "ENABLE_CHAOXING_SERVICE", os.getenv("ENABLE_CHAOXING_SERVICE", "true")
             ),
         )
         if validate:
