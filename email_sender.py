@@ -52,6 +52,14 @@ def build_course_task_email_body(tasks: list[CourseTask]) -> str:
     chaoxing_exams = [
         t for t in tasks if t.source_platform == "chaoxing" and t.task_type == "exam"
     ]
+    mooc_assignments = [
+        t
+        for t in tasks
+        if t.source_platform == "mooc" and t.task_type == "assignment"
+    ]
+    mooc_exams = [
+        t for t in tasks if t.source_platform == "mooc" and t.task_type == "exam"
+    ]
 
     lines = ["今日课程待完成任务", ""]
 
@@ -91,6 +99,30 @@ def build_course_task_email_body(tasks: list[CourseTask]) -> str:
                 ]
             )
 
+    if mooc_assignments:
+        lines.append("## 中国大学MOOC / 作业")
+        for task in mooc_assignments:
+            lines.extend(
+                [
+                    f"课程：{task.course_name}",
+                    f"任务：{task.title}",
+                    f"截止：{task.deadline_text}",
+                    "",
+                ]
+            )
+
+    if mooc_exams:
+        lines.append("## 中国大学MOOC / 考试")
+        for task in mooc_exams:
+            lines.extend(
+                [
+                    f"课程：{task.course_name}",
+                    f"任务：{task.title}",
+                    f"截止：{task.deadline_text}",
+                    "",
+                ]
+            )
+
     return "\n".join(lines).strip()
 
 
@@ -110,6 +142,14 @@ def build_course_task_email_html(tasks: list[CourseTask]) -> str:
     ]
     chaoxing_exams = [
         t for t in tasks if t.source_platform == "chaoxing" and t.task_type == "exam"
+    ]
+    mooc_assignments = [
+        t
+        for t in tasks
+        if t.source_platform == "mooc" and t.task_type == "assignment"
+    ]
+    mooc_exams = [
+        t for t in tasks if t.source_platform == "mooc" and t.task_type == "exam"
     ]
 
     if xiaoya_tasks:
@@ -132,6 +172,20 @@ def build_course_task_email_html(tasks: list[CourseTask]) -> str:
             for t in chaoxing_exams
         )
         sections.append(f"<h2>超星学习通 / 考试</h2><ul>{items}</ul>")
+
+    if mooc_assignments:
+        items = "".join(
+            f"<li><strong>{escape(t.course_name)}</strong> - {escape(t.title)}<div>截止：{escape(t.deadline_text)}</div></li>"
+            for t in mooc_assignments
+        )
+        sections.append(f"<h2>中国大学MOOC / 作业</h2><ul>{items}</ul>")
+
+    if mooc_exams:
+        items = "".join(
+            f"<li><strong>{escape(t.course_name)}</strong> - {escape(t.title)}<div>截止：{escape(t.deadline_text)}</div></li>"
+            for t in mooc_exams
+        )
+        sections.append(f"<h2>中国大学MOOC / 考试</h2><ul>{items}</ul>")
 
     return f"<html><body><h1>课程任务提醒</h1>{''.join(sections)}</body></html>"
 
