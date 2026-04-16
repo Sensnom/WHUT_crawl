@@ -8,7 +8,7 @@ MOOC客户端 - 中国大学MOOC/SPOC课程任务抓取
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -23,6 +23,39 @@ MOOC_LOGIN_URL = "https://www.icourse163.org/member/login.htm"
 MOOC_HOME_URL = "https://www.icourse163.org/home.htm"
 MOOC_COURSE_LEARN_URL = "https://www.icourse163.org/learn/{course_key}"
 SPOC_COURSE_LEARN_URL = "https://www.icourse163.org/spoc/learn/{course_key}"
+
+
+def _parse_mooc_deadline(
+    text: str, now: datetime | None = None
+) -> tuple[str, datetime | None]:
+    match = re.search(r"(\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2})", text)
+    if not match:
+        return text.strip(), None
+
+    normalized = match.group(1).replace("/", "-")
+    try:
+        return normalized, datetime.strptime(normalized, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return normalized, None
+
+
+def _is_mooc_task_within_window(deadline_at: datetime | None, now: datetime) -> bool:
+    if deadline_at is None:
+        return False
+    return now <= deadline_at <= now + timedelta(days=30)
+
+
+def _clean_mooc_task_title(title: str, text: str, task_type: str) -> str:
+    cleaned = title.strip() or text.strip()
+    cleaned = re.sub(
+        r"时间[：:]?\s*\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2}", " ", cleaned
+    )
+    cleaned = re.sub(r"\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2}", " ", cleaned)
+    cleaned = re.sub(r"前往测验|前往考试|请注意|立即前往|去完成|前往", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ：:-")
+    if cleaned:
+        return cleaned[:100]
+    return "考试" if task_type == "exam" else "作业"
 
 
 class Browser(Protocol):
@@ -140,8 +173,28 @@ class MoocClient:
     def _login_if_needed(self, page, timeout_ms: int) -> None:
         page.goto(MOOC_LOGIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
 
-        if "login" in page.url.lower():
+        current_url = page.url.lower()
+        if "logingate/changecookie" in current_url:
+            page.wait_for_timeout(3000)
+            current_url = page.url.lower()
+
+        if "login" not in current_url and (
+            "passport/member/logout" in current_url
+            or self._is_logged_out_homepage(page)
+        ):
+            page.goto(MOOC_LOGIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+            current_url = page.url.lower()
+
+        if "login" in current_url:
             self._perform_login(page, timeout_ms)
+
+    def _is_logged_out_homepage(self, page) -> bool:
+        try:
+            html = page.content()
+        except Exception:
+            return False
+
+        return bool(re.search(r"登录\s*\|\s*注册", html)) and "个人中心" not in html
 
     def _perform_login(self, page, timeout_ms: int) -> None:
         try:
@@ -335,7 +388,11 @@ class MoocClient:
         html = page.content()
 
         learn_pattern = r"/learn/([A-Za-z]+-\d+)"
-        course_keys = list(set(re.findall(learn_pattern, html)))
+        course_keys = list(dict.fromkeys(re.findall(learn_pattern, html)))
+        card_keys = self._get_course_keys_from_cards(
+            page, "a.j-course-card-box", learn_pattern, timeout_ms
+        )
+        course_keys.extend(key for key in card_keys if key not in course_keys)
 
         for key in course_keys:
             try:
@@ -373,6 +430,41 @@ class MoocClient:
                 continue
 
         return courses
+
+    def _get_course_keys_from_cards(
+        self, page, selector: str, learn_pattern: str, timeout_ms: int
+    ) -> list[str]:
+        try:
+            cards = page.locator(selector)
+            count = cards.count()
+        except Exception:
+            return []
+
+        course_keys: list[str] = []
+        for index in range(count):
+            popup = None
+            try:
+                with page.context.expect_page(
+                    timeout=min(timeout_ms, 3000)
+                ) as popup_info:
+                    cards.nth(index).click(timeout=3000)
+                popup = popup_info.value
+                popup.wait_for_load_state("domcontentloaded")
+                match = re.search(learn_pattern, popup.url)
+                if match:
+                    key = match.group(1)
+                    if key not in course_keys:
+                        course_keys.append(key)
+            except Exception:
+                continue
+            finally:
+                if popup is not None:
+                    try:
+                        popup.close()
+                    except Exception:
+                        pass
+
+        return course_keys
 
     def _get_spoc_courses(self, page, timeout_ms: int) -> list[dict]:
         courses: list[dict] = []
@@ -460,15 +552,17 @@ class MoocClient:
         is_spoc = course.get("is_spoc", False)
 
         if is_spoc:
-            tasks.extend(self._get_spoc_work_items(page, course["name"]))
-            tasks.extend(self._get_spoc_exam_items(page, course["name"]))
+            tasks.extend(self._get_spoc_work_items(page, course["name"], now))
+            tasks.extend(self._get_spoc_exam_items(page, course["name"], now))
         else:
-            tasks.extend(self._get_work_items(page, course["name"]))
-            tasks.extend(self._get_exam_items(page, course["name"]))
+            tasks.extend(self._get_work_items(page, course["name"], now))
+            tasks.extend(self._get_exam_items(page, course["name"], now))
 
         return tasks
 
-    def _get_spoc_work_items(self, page, course_name: str) -> list[CourseTask]:
+    def _get_spoc_work_items(
+        self, page, course_name: str, now: datetime
+    ) -> list[CourseTask]:
         items: list[CourseTask] = []
 
         try:
@@ -527,21 +621,21 @@ class MoocClient:
                     continue
 
                 deadline = ""
+                deadline_at = None
                 if deadline_el:
-                    deadline_text = deadline_el.get_text(strip=True)
-                    dl_match = re.search(
-                        r"(\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2})", deadline_text
+                    deadline, deadline_at = _parse_mooc_deadline(
+                        deadline_el.get_text(strip=True), now
                     )
-                    if dl_match:
-                        deadline = dl_match.group(1).replace("/", "-")
 
-                if deadline:
+                if deadline and _is_mooc_task_within_window(deadline_at, now):
                     items.append(
                         CourseTask(
-                            title=title[:100],
+                            title=_clean_mooc_task_title(
+                                title, hw_item.get_text(" ", strip=True), "assignment"
+                            ),
                             course_name=course_name,
                             deadline_text=deadline,
-                            deadline_at=None,
+                            deadline_at=deadline_at,
                             url="",
                             source_platform="mooc",
                             task_type="assignment",
@@ -553,7 +647,9 @@ class MoocClient:
 
         return items
 
-    def _get_spoc_exam_items(self, page, course_name: str) -> list[CourseTask]:
+    def _get_spoc_exam_items(
+        self, page, course_name: str, now: datetime
+    ) -> list[CourseTask]:
         items: list[CourseTask] = []
 
         try:
@@ -616,21 +712,21 @@ class MoocClient:
                     continue
 
                 deadline = ""
+                deadline_at = None
                 if deadline_el:
-                    deadline_text = deadline_el.get_text(strip=True)
-                    dl_match = re.search(
-                        r"(\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2})", deadline_text
+                    deadline, deadline_at = _parse_mooc_deadline(
+                        deadline_el.get_text(strip=True), now
                     )
-                    if dl_match:
-                        deadline = dl_match.group(1).replace("/", "-")
 
-                if deadline:
+                if deadline and _is_mooc_task_within_window(deadline_at, now):
                     items.append(
                         CourseTask(
-                            title=title[:100],
+                            title=_clean_mooc_task_title(
+                                title, exam_item.get_text(" ", strip=True), "exam"
+                            ),
                             course_name=course_name,
                             deadline_text=deadline,
-                            deadline_at=None,
+                            deadline_at=deadline_at,
                             url="",
                             source_platform="mooc",
                             task_type="exam",
@@ -642,7 +738,9 @@ class MoocClient:
 
         return items
 
-    def _get_work_items(self, page, course_name: str) -> list[CourseTask]:
+    def _get_work_items(
+        self, page, course_name: str, now: datetime
+    ) -> list[CourseTask]:
         items: list[CourseTask] = []
 
         try:
@@ -701,7 +799,7 @@ class MoocClient:
             )
             for list_elem in lists:
                 for li in list_elem.find_all("li"):
-                    task = self._parse_work_item(li, course_name)
+                    task = self._parse_work_item(li, course_name, now)
                     if task:
                         items.append(task)
 
@@ -714,20 +812,22 @@ class MoocClient:
                 text = soup.get_text()
                 work_sections = re.findall(r"(.{0,30}作业.{0,100})", text)
                 for section in work_sections[:5]:
-                    deadline_match = re.search(
-                        r"(\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2})", section
-                    )
-                    if deadline_match:
+                    deadline_text, deadline_at = _parse_mooc_deadline(section, now)
+                    if deadline_at and _is_mooc_task_within_window(deadline_at, now):
                         title_match = re.search(r"([^\n截止]{2,30}?作业)", section)
-                        if title_match:
+                        if title_match or "作业" in section:
                             items.append(
                                 CourseTask(
-                                    title=title_match.group(1).strip(),
-                                    course_name=course_name,
-                                    deadline_text=deadline_match.group(1).replace(
-                                        "/", "-"
+                                    title=_clean_mooc_task_title(
+                                        title_match.group(1).strip()
+                                        if title_match
+                                        else section,
+                                        section,
+                                        "assignment",
                                     ),
-                                    deadline_at=None,
+                                    course_name=course_name,
+                                    deadline_text=deadline_text,
+                                    deadline_at=deadline_at,
                                     url="",
                                     source_platform="mooc",
                                     task_type="assignment",
@@ -739,7 +839,9 @@ class MoocClient:
 
         return items
 
-    def _parse_work_item(self, element, course_name: str) -> CourseTask | None:
+    def _parse_work_item(
+        self, element, course_name: str, now: datetime
+    ) -> CourseTask | None:
         try:
             text = element.get_text()
             if len(text) < 5:
@@ -755,16 +857,7 @@ class MoocClient:
             if not title:
                 return None
 
-            deadline = ""
-            dl_patterns = [
-                r"截止[：:\s]*(\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2})",
-                r"(\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2})",
-            ]
-            for pattern in dl_patterns:
-                match = re.search(pattern, text)
-                if match:
-                    deadline = match.group(1).replace("/", "-")
-                    break
+            deadline, deadline_at = _parse_mooc_deadline(text, now)
 
             status = "unfinished"
             if any(kw in text for kw in ["已完成", "已提交", "已批改"]):
@@ -773,6 +866,9 @@ class MoocClient:
                 status = "upcoming"
 
             if status == "finished":
+                return None
+
+            if not _is_mooc_task_within_window(deadline_at, now):
                 return None
 
             url = ""
@@ -791,10 +887,10 @@ class MoocClient:
                     )
 
             return CourseTask(
-                title=title[:100],
+                title=_clean_mooc_task_title(title, text, "assignment"),
                 course_name=course_name,
                 deadline_text=deadline,
-                deadline_at=None,
+                deadline_at=deadline_at,
                 url=url,
                 source_platform="mooc",
                 task_type="assignment",
@@ -802,7 +898,9 @@ class MoocClient:
         except Exception:
             return None
 
-    def _get_exam_items(self, page, course_name: str) -> list[CourseTask]:
+    def _get_exam_items(
+        self, page, course_name: str, now: datetime
+    ) -> list[CourseTask]:
         items: list[CourseTask] = []
 
         try:
@@ -851,18 +949,22 @@ class MoocClient:
             text = soup.get_text()
             exam_sections = re.findall(r"(.{0,30}考试.{0,100})", text)
             for section in exam_sections[:5]:
-                deadline_match = re.search(
-                    r"(\d{4}[-/]\d{2}[-/]\d{2}\s*\d{1,2}:\d{2})", section
-                )
-                if deadline_match:
+                deadline_text, deadline_at = _parse_mooc_deadline(section, now)
+                if deadline_at and _is_mooc_task_within_window(deadline_at, now):
                     title_match = re.search(r"([^\n考试]{2,30}?考试)", section)
-                    if title_match:
+                    if title_match or "考试" in section:
                         items.append(
                             CourseTask(
-                                title=title_match.group(1).strip(),
+                                title=_clean_mooc_task_title(
+                                    title_match.group(1).strip()
+                                    if title_match
+                                    else section,
+                                    section,
+                                    "exam",
+                                ),
                                 course_name=course_name,
-                                deadline_text=deadline_match.group(1).replace("/", "-"),
-                                deadline_at=None,
+                                deadline_text=deadline_text,
+                                deadline_at=deadline_at,
                                 url="",
                                 source_platform="mooc",
                                 task_type="exam",

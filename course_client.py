@@ -2,6 +2,7 @@ from collections.abc import Callable
 from datetime import datetime
 from html import escape
 from pathlib import Path
+from time import sleep
 from typing import Protocol
 
 from playwright.sync_api import sync_playwright
@@ -75,7 +76,7 @@ class CourseClient:
                     print("DEBUG: _try_fetch_with_cached_auth_state returned None")
                     print("DEBUG: page.url:", page.url)
                     with open("debug_page.html", "w") as f:
-                        f.write(page.content())
+                        f.write(self._get_page_content(page))
             if not any(marker in page.url for marker in LOGIN_URL_MARKERS):
                 try:
                     page.wait_for_url(LOGIN_URL_PATTERN, timeout=timeout_ms)
@@ -87,7 +88,7 @@ class CourseClient:
                 page.wait_for_url("**/tpass/login*", timeout=timeout_ms)
 
             username_selector, password_selector, submit_selector = (
-                self._get_login_controls(page.url, page.content())
+                self._get_login_controls(page.url, self._get_page_content(page))
             )
             page.fill(username_selector, self.settings.smart_whut_username)
             page.fill(password_selector, self.settings.smart_whut_password)
@@ -95,7 +96,7 @@ class CourseClient:
             try:
                 page.wait_for_selector("text=待完成任务", timeout=timeout_ms)
             except Exception as exc:
-                html = page.content()
+                html = self._get_page_content(page)
                 if not self._has_rendered_course_marker(html):
                     raise RuntimeError("课程页面加载失败") from exc
                 return html
@@ -137,7 +138,7 @@ class CourseClient:
                 PENDING_TASK_TRIGGER_SELECTOR, timeout=min(timeout_ms, 15000)
             )
         except Exception:
-            return page.content()
+            return self._get_page_content(page)
 
         with page.expect_response(
             lambda response: PENDING_TASK_API_PATH in response.url,
@@ -149,7 +150,7 @@ class CourseClient:
         payload = response.json().get("data", [])
         if isinstance(payload, list) and payload:
             return self.build_pending_task_html(payload)
-        return page.content()
+        return self._get_page_content(page)
 
     def _try_fetch_with_cached_auth_state(self, page, timeout_ms: int) -> str | None:
         if self._is_login_url(page.url):
@@ -175,11 +176,25 @@ class CourseClient:
         if self._is_login_url(page.url):
             return None
 
-        if self._has_course_task_entry(page.content()):
+        html = self._get_page_content(page)
+        if self._has_course_task_entry(html):
             return self._fetch_pending_task_html(page, timeout_ms)
 
         # If we are not on a login page, we are logged in but might not have tasks
-        return page.content()
+        return html
+
+    @staticmethod
+    def _get_page_content(page, retries: int = 3, delay_seconds: float = 0.2) -> str:
+        for attempt in range(retries):
+            try:
+                return page.content()
+            except Exception as exc:
+                if "navigating and changing the content" not in str(exc):
+                    raise
+                if attempt == retries - 1:
+                    raise
+                sleep(delay_seconds)
+        raise RuntimeError("unreachable")
 
     @staticmethod
     def _is_login_url(url: str) -> bool:

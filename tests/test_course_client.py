@@ -1,6 +1,7 @@
 from config import Settings
 from course_parser import parse_pending_course_tasks
 from pathlib import Path
+import tempfile
 
 
 class FakePage:
@@ -21,6 +22,7 @@ class FakePage:
         self.pending_task_payload: list[dict] = []
         self.saved_storage_paths: list[str] = []
         self.deferred_html: str | None = None
+        self.content_failures: list[Exception] = []
 
     def goto(self, url: str, wait_until: str | None = None, timeout: int | None = None):
         self.visited_urls.append(url)
@@ -43,6 +45,8 @@ class FakePage:
             self.next_url = None
 
     def content(self) -> str:
+        if self.content_failures:
+            raise self.content_failures.pop(0)
         return self.rendered_html
 
     def expect_response(self, predicate, timeout: int):
@@ -101,6 +105,7 @@ def make_settings() -> Settings:
         base_url="https://api.deepseek.com",
         model="deepseek-chat",
         request_timeout=60,
+        output_dir=tempfile.mkdtemp(prefix="course-client-tests-"),
         course_page_url="https://whut.ai-augmented.com/app/jx-web/mycourse",
         smart_whut_username="2020123456",
         smart_whut_password="secret",
@@ -132,7 +137,10 @@ def test_fetch_course_page_uses_browser_login_and_returns_rendered_html():
         "button[type='submit']",
         '[data-xy-click-pt="unstudy-task"]',
     ]
-    assert page.waited_selectors == [("text=待完成任务", 60000)]
+    assert page.waited_selectors == [
+        ("text=待完成任务", 60000),
+        ('[data-xy-click-pt="unstudy-task"]', 15000),
+    ]
     assert browser.closed is True
 
 
@@ -332,3 +340,31 @@ def test_fetch_course_page_waits_briefly_for_cached_course_dom_before_relogin(
     assert "待完成任务" in html
     assert page.fills == []
     assert browser.new_page_storage_paths == [str(auth_state_path)]
+
+
+def test_fetch_course_page_retries_when_page_content_is_temporarily_unavailable(
+    tmp_path: Path,
+):
+    from course_client import CourseClient
+
+    auth_state_path = tmp_path / "playwright_auth_state.json"
+    auth_state_path.write_text("{}", encoding="utf-8")
+
+    page = FakePage(
+        '<html><body><div data-xy-click-pt="unstudy-task">待完成任务</div></body></html>'
+    )
+    page.content_failures = [
+        RuntimeError(
+            "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+        )
+    ]
+    browser = FakeBrowser(page)
+    client = CourseClient(
+        make_settings_with_output(tmp_path), browser_factory=lambda: browser
+    )
+
+    html = client.fetch_course_page_html()
+
+    assert "待完成任务" in html
+    assert page.fills == []
+    assert browser.closed is True
