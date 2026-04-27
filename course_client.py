@@ -177,10 +177,19 @@ class CourseClient:
             return None
 
         html = self._get_page_content(page)
+        if self._is_login_url(page.url) or "统一身份认证" in html:
+            return None
         if self._has_course_task_entry(html):
             return self._fetch_pending_task_html(page, timeout_ms)
 
-        # If we are not on a login page, we are logged in but might not have tasks
+        return html
+
+    def _fetch_with_login_check(self, page, timeout_ms: int) -> str | None:
+        html = self._get_page_content(page)
+        if self._is_login_url(page.url) or "统一身份认证" in html:
+            return None
+        if self._has_course_task_entry(html):
+            return self._fetch_pending_task_html(page, timeout_ms)
         return html
 
     @staticmethod
