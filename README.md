@@ -92,6 +92,12 @@ STATE_RETENTION_DAYS=15  # 状态文件保留天数，过期自动清理
 # ========== 服务总开关 ==========
 ENABLE_NEWS_SERVICE=true     # 通知摘要（开/关）
 ENABLE_COURSE_SERVICE=true  # 课程任务邮件（开/关）
+
+# ========== NapCat QQ 晚间推送 ==========
+ENABLE_NAPCAT_SERVICE=false
+NAPCAT_BASE_URL=http://localhost:3000
+NAPCAT_ACCESS_TOKEN=your_token
+NAPCAT_TARGETS=group:123456789,private:987654321
 ```
 
 ---
@@ -107,6 +113,10 @@ ENABLE_COURSE_SERVICE=true  # 课程任务邮件（开/关）
 | 163 邮箱 | `smtp.163.com` | 465 (SSL) | 邮箱设置 → POP3/SMTP/IMAP → 客户端授权密码 |
 | 企业邮箱 | `smtp.exmail.qq.com` | 465 (SSL) | 管理员开通或自设授权码 |
 
+### NapCat QQ 晚间推送
+
+晚间新闻摘要可选接入 NapCat 推送到 QQ。该配置只用于 `18:00` 的本科生院新闻摘要，不影响中午新闻邮件、补发邮件或课程任务邮件。`NAPCAT_TARGETS` 需使用 `group:<id>` 或 `private:<id>` 语法，多个目标用逗号分隔。
+
 ---
 
 ## 运行
@@ -115,7 +125,7 @@ ENABLE_COURSE_SERVICE=true  # 课程任务邮件（开/关）
 # 手动运行一次（完整流程：抓取→摘要→发送）
 uv run python main.py
 
-# 仅运行健康检查（验证配置是否正确）
+# 仅运行健康检查（验证基础配置与本地运行前提）
 uv run python main.py --mode healthcheck
 ```
 

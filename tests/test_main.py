@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from delivery_state import DeliveryRecord, DeliveryStateStore, get_state_path
 from main import (
+    build_napcat_news_message,
     enrich_notice_content,
     fetch_course_tasks,
     format_summary_markdown,
@@ -15,7 +16,9 @@ from main import (
     get_target_delivery_date,
     load_settings_for_mode,
     main,
+    process_evening_delivery,
     process_course_task_delivery,
+    save_delivery_record,
     run,
     run_news_mode,
     write_summary_file,
@@ -109,6 +112,68 @@ def test_format_summary_markdown_adds_heading_and_notice_list():
     assert result.startswith("# 本科生院最近三天通知总结")
     assert "## 涉及通知" in result
     assert "通知A" in result
+
+
+def test_build_napcat_news_message_uses_lightweight_layout():
+    notices = [
+        NoticeItem(
+            title="关于组织测试活动的通知",
+            url="http://i.whut.edu.cn/test",
+            publish_time=datetime(2026, 4, 27, 18, 0),
+            source="本科生院",
+        )
+    ]
+    markdown = "# 本科生院最近三天通知总结\n\n## 摘要\n\n1. **测试事项**：今晚提交。\n"
+
+    message = build_napcat_news_message(markdown, notices)
+
+    assert message.startswith("本科生院最近三天通知总结")
+    assert "\n\n摘要\n" in message
+    assert "涉及通知" in message
+    assert "[" not in message
+    assert "#" not in message
+    assert "http://i.whut.edu.cn/test" in message
+
+
+def test_build_napcat_news_message_uses_default_summary_when_body_missing():
+    message = build_napcat_news_message(
+        "# 本科生院最近三天通知总结\n\n## 摘要\n",
+        [],
+    )
+
+    assert "摘要\n最近三天没有通知。" in message
+    assert "涉及通知" not in message
+
+
+def test_build_napcat_news_message_accepts_non_standard_summary_heading():
+    notices = [
+        NoticeItem(
+            title="关于组织测试活动的通知",
+            url="http://i.whut.edu.cn/test",
+            publish_time=datetime(2026, 4, 27, 18, 0),
+            source="本科生院",
+        )
+    ]
+    markdown = "# 本科生院最近三天通知总结\n\n### 摘要\n\n1. **测试事项**：今晚提交。\n\n### 其他\n忽略\n"
+
+    message = build_napcat_news_message(markdown, notices)
+
+    assert "摘要\n1. 测试事项：今晚提交。" in message
+    assert "忽略" not in message
+
+
+def test_build_napcat_news_message_uses_notice_links_from_markdown_when_notices_missing():
+    markdown = (
+        "# 本科生院最近三天通知总结\n\n"
+        "## 摘要\n\n"
+        "1. **测试事项**：今晚提交。\n\n"
+        "## 涉及通知\n\n"
+        "- `2026-04-27` [关于组织测试活动的通知](http://i.whut.edu.cn/test)\n"
+    )
+
+    message = build_napcat_news_message(markdown, [])
+
+    assert "涉及通知\n1. 关于组织测试活动的通知\nhttp://i.whut.edu.cn/test" in message
 
 
 def test_enrich_notice_content_keeps_notice_when_detail_fetch_fails(monkeypatch):
@@ -246,6 +311,137 @@ def test_load_settings_for_healthcheck_does_not_require_api_key(monkeypatch, tmp
     settings = load_settings_for_mode("healthcheck")
 
     assert settings.api_key == ""
+
+
+def test_save_delivery_record_persists_successful_napcat_metadata(tmp_path: Path):
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 0)
+
+    save_delivery_record(
+        store,
+        datetime(2026, 3, 20, 0, 0),
+        "evening",
+        tmp_path / "summary_20260320_evening.md",
+        ["https://example.com/new"],
+        True,
+        "sent",
+        now=now,
+        napcat_sent=True,
+        napcat_target_results=[{"target": "group:123", "sent": True, "error": ""}],
+    )
+
+    record = store.get_record("2026-03-20", "evening")
+
+    assert record is not None
+    assert record["email_sent"] is True
+    assert record["napcat_sent"] is True
+    assert record["napcat_error"] == ""
+    assert record["napcat_target_results"] == [
+        {"target": "group:123", "sent": True, "error": ""}
+    ]
+    assert record["sent_at"] == now.isoformat()
+    assert record["updated_at"] == now.isoformat()
+
+
+def test_save_delivery_record_persists_failed_napcat_metadata(tmp_path: Path):
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 5)
+
+    save_delivery_record(
+        store,
+        datetime(2026, 3, 20, 0, 0),
+        "evening",
+        tmp_path / "summary_20260320_evening.md",
+        ["https://example.com/new"],
+        False,
+        "failed",
+        warning_emitted=True,
+        now=now,
+        napcat_sent=False,
+        napcat_error="timeout",
+        napcat_target_results=[{"target": "group:123", "sent": False, "error": "timeout"}],
+    )
+
+    record = store.get_record("2026-03-20", "evening")
+
+    assert record is not None
+    assert record["email_sent"] is False
+    assert record["napcat_sent"] is False
+    assert record["napcat_error"] == "timeout"
+    assert record["napcat_target_results"] == [
+        {"target": "group:123", "sent": False, "error": "timeout"}
+    ]
+    assert record["warning_emitted"] is True
+    assert record["sent_at"] == ""
+    assert record["updated_at"] == now.isoformat()
+
+
+def test_save_delivery_record_preserves_existing_napcat_metadata_when_omitted(
+    tmp_path: Path,
+):
+    store = DeliveryStateStore(tmp_path / "state.json")
+
+    save_delivery_record(
+        store,
+        datetime(2026, 3, 20, 0, 0),
+        "evening",
+        tmp_path / "summary_20260320_evening.md",
+        ["https://example.com/new"],
+        True,
+        "sent",
+        now=datetime(2026, 3, 20, 18, 0),
+        napcat_sent=True,
+        napcat_error="",
+        napcat_target_results=[
+            {"target": "group:123", "sent": True, "error": ""}
+        ],
+    )
+
+    save_delivery_record(
+        store,
+        datetime(2026, 3, 20, 0, 0),
+        "evening",
+        tmp_path / "summary_20260320_evening.md",
+        ["https://example.com/new"],
+        False,
+        "failed",
+        warning_emitted=True,
+        now=datetime(2026, 3, 20, 18, 5),
+    )
+
+    record = store.get_record("2026-03-20", "evening")
+
+    assert record is not None
+    assert record["napcat_sent"] is True
+    assert record["napcat_error"] == ""
+    assert record["napcat_target_results"] == [
+        {"target": "group:123", "sent": True, "error": ""}
+    ]
+    assert record["sent_at"] == "2026-03-20T18:00:00"
+    assert record["updated_at"] == "2026-03-20T18:05:00"
+
+
+def test_process_evening_delivery_wires_napcat_dependencies(monkeypatch, tmp_path: Path):
+    settings = make_settings(tmp_path)
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 0)
+    captured: dict[str, object] = {}
+
+    def fake_process_evening_delivery_service(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return 9
+
+    monkeypatch.setattr(
+        "main.process_evening_delivery_service", fake_process_evening_delivery_service
+    )
+
+    assert process_evening_delivery(settings, store, now) == 9
+    assert captured["args"] == (settings, store, now)
+    assert captured["kwargs"]["send_napcat_message_fn"] is __import__(
+        "main"
+    ).send_napcat_message
+    assert captured["kwargs"]["build_napcat_news_message_fn"] is build_napcat_news_message
 
 
 def test_run_news_mode_uses_injected_runtime(monkeypatch):
@@ -946,6 +1142,47 @@ def test_run_retry_failed_noon_supports_aware_now_with_naive_notice_times(
     record = store.get_record("2026-03-20", "noon")
     assert record is not None
     assert record["email_sent"] is True
+
+
+def test_retry_failed_deliveries_for_today_retries_partial_napcat_evening_success(
+    monkeypatch, tmp_path: Path
+):
+    settings = make_settings(tmp_path)
+    settings.enable_napcat_service = True
+    store = DeliveryStateStore(get_state_path(str(tmp_path)))
+    store.record(
+        DeliveryRecord(
+            date="2026-03-20",
+            slot="evening",
+            summary_path=str(tmp_path / "summary_20260320_evening.md"),
+            email_sent=True,
+            notice_urls=["http://example.com/a"],
+            status="sent",
+            napcat_sent=False,
+            napcat_error="group:123456: timeout",
+            napcat_target_results=[
+                {"target": "group:123456", "sent": False, "error": "timeout"},
+                {"target": "private:987654", "sent": True, "error": ""},
+            ],
+        )
+    )
+    attempted: list[str] = []
+
+    monkeypatch.setattr(
+        "main.process_evening_delivery",
+        lambda _settings, _store, _now: attempted.append("evening") or 0,
+    )
+
+    from main import retry_failed_deliveries_for_today
+
+    result = retry_failed_deliveries_for_today(
+        settings,
+        store,
+        datetime(2026, 3, 20, 18, 5),
+    )
+
+    assert result == {"evening"}
+    assert attempted == ["evening"]
 
 
 def test_run_does_not_retry_failed_noon_twice_in_same_scheduled_run(

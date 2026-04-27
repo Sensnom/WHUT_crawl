@@ -99,3 +99,50 @@ def test_cleanup_handles_aware_now_with_legacy_naive_last_cleanup_at(tmp_path):
         datetime(2026, 3, 19, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")), 15
     )
     assert changed is False
+
+
+def test_delivery_record_persists_napcat_defaults(tmp_path):
+    state = DeliveryStateStore(tmp_path / "state.json")
+    state.record(
+        DeliveryRecord(
+            date="2026-03-19",
+            slot="evening",
+            summary_path="output/summary_20260319_evening.md",
+            email_sent=True,
+            notice_urls=["http://example.com/a"],
+            status="sent",
+        )
+    )
+
+    loaded = state.list_records()[0]
+
+    assert loaded["napcat_sent"] is False
+    assert loaded["napcat_error"] == ""
+    assert loaded["napcat_target_results"] == []
+
+
+def test_delivery_record_persists_napcat_fields(tmp_path):
+    state = DeliveryStateStore(tmp_path / "state.json")
+    state.record(
+        DeliveryRecord(
+            date="2026-03-19",
+            slot="evening",
+            summary_path="output/summary_20260319_evening.md",
+            email_sent=True,
+            notice_urls=["http://example.com/a"],
+            status="sent",
+            napcat_sent=False,
+            napcat_error="group:123 timeout",
+            napcat_target_results=[
+                {"target": "group:123", "sent": False, "error": "timeout"}
+            ],
+        )
+    )
+
+    loaded = state.list_records()[0]
+
+    assert loaded["napcat_sent"] is False
+    assert loaded["napcat_error"] == "group:123 timeout"
+    assert loaded["napcat_target_results"] == [
+        {"target": "group:123", "sent": False, "error": "timeout"}
+    ]

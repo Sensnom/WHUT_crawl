@@ -24,8 +24,13 @@ def parse_bool_env(name: str, raw: str) -> bool:
     raise ValueError(f"配置错误: {name} 必须是布尔值")
 
 
+def parse_csv_env(raw: str) -> list[str]:
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 def validate_settings(settings: "Settings") -> None:
     _validate_common_settings(settings)
+    _validate_napcat_settings(settings)
 
 
 def _validate_common_settings(
@@ -79,6 +84,38 @@ def _validate_email_settings(settings: "Settings") -> None:
         raise ValueError("配置错误: " + "; ".join(errors))
 
 
+def _validate_napcat_targets(targets: list[str]) -> None:
+    for target in targets:
+        target_type, _, target_id = target.partition(":")
+        if (
+            target_type not in {"group", "private"}
+            or not target_id
+            or not target_id.isdigit()
+        ):
+            raise ValueError(
+                "配置错误: NAPCAT_TARGETS 必须使用 group:<id> 或 private:<id>"
+            )
+
+
+def _validate_napcat_settings(settings: "Settings") -> None:
+    if not settings.enable_napcat_service:
+        return
+
+    errors: list[str] = []
+
+    if not settings.napcat_base_url:
+        errors.append("NAPCAT_BASE_URL 不能为空")
+    if not settings.napcat_access_token:
+        errors.append("NAPCAT_ACCESS_TOKEN 不能为空")
+    if not settings.napcat_targets:
+        errors.append("NAPCAT_TARGETS 不能为空")
+
+    if errors:
+        raise ValueError("配置错误: " + "; ".join(errors))
+
+    _validate_napcat_targets(settings.napcat_targets)
+
+
 @dataclass
 class Settings:
     api_key: str
@@ -114,6 +151,10 @@ class Settings:
     mooc_password: str = ""
     mooc_target_course_names: list[str] = field(default_factory=list)
     enable_mooc_service: bool = True
+    enable_napcat_service: bool = False
+    napcat_base_url: str = ""
+    napcat_access_token: str = ""
+    napcat_targets: list[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls, *, validate: bool = True) -> "Settings":
@@ -184,6 +225,13 @@ class Settings:
             enable_mooc_service=parse_bool_env(
                 "ENABLE_MOOC_SERVICE", os.getenv("ENABLE_MOOC_SERVICE", "true")
             ),
+            enable_napcat_service=parse_bool_env(
+                "ENABLE_NAPCAT_SERVICE",
+                os.getenv("ENABLE_NAPCAT_SERVICE", "false"),
+            ),
+            napcat_base_url=os.getenv("NAPCAT_BASE_URL", "").strip(),
+            napcat_access_token=os.getenv("NAPCAT_ACCESS_TOKEN", "").strip(),
+            napcat_targets=parse_csv_env(os.getenv("NAPCAT_TARGETS", "")),
         )
         if validate:
             validate_settings(settings)
@@ -192,6 +240,7 @@ class Settings:
     @staticmethod
     def validate_for_mode(settings: "Settings", mode: str) -> None:
         _validate_common_settings(settings, require_api_key=mode != "healthcheck")
+        _validate_napcat_settings(settings)
 
         if mode in {"run", "news"}:
             _validate_email_settings(settings)

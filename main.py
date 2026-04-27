@@ -2,6 +2,7 @@ import argparse
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
+import re
 from zoneinfo import ZoneInfo
 
 from app.healthcheck import run_healthcheck
@@ -30,6 +31,7 @@ from email_sender import (
     send_email,
 )
 from models import NoticeItem
+from napcat_sender import send_napcat_message
 from parser import filter_recent_notices, filter_source_notices, parse_list_page
 from services.backfill_service import send_backfill_if_needed as run_backfill_service
 from services.cleanup_service import cleanup_old_delivery_data as run_cleanup_service
@@ -87,6 +89,74 @@ def format_summary_markdown(
         lines.extend(["## 涉及通知", ""])
         for item in notices:
             lines.append(f"- `{item.publish_time:%Y-%m-%d}` [{item.title}]({item.url})")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _strip_lightweight_markdown(text: str) -> str:
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", text)
+    return text.strip()
+
+
+def _extract_notice_lines_from_markdown(markdown: str) -> list[tuple[str, str]]:
+    notice_lines: list[tuple[str, str]] = []
+    in_notice_section = False
+
+    for raw_line in markdown.strip().splitlines():
+        line = raw_line.strip()
+        heading_text = line.lstrip("# ").strip() if line.startswith("#") else ""
+        if heading_text == "涉及通知":
+            in_notice_section = True
+            continue
+        if line.startswith("#") and in_notice_section:
+            break
+        if not in_notice_section or not line.startswith("-"):
+            continue
+
+        match = re.match(r"-\s+`[^`]+`\s+\[(.*?)\]\((.*?)\)", line)
+        if match:
+            notice_lines.append(
+                (_strip_lightweight_markdown(match.group(1)), match.group(2).strip())
+            )
+
+    return notice_lines
+
+
+def build_napcat_news_message(markdown: str, notices: list[NoticeItem]) -> str:
+    raw_lines = markdown.strip().splitlines()
+    title = raw_lines[0].lstrip("# ").strip() if raw_lines else "通知总结"
+    summary_lines: list[str] = []
+    in_summary = False
+
+    for raw_line in raw_lines[1:]:
+        line = raw_line.strip()
+        heading_text = line.lstrip("# ").strip() if line.startswith("#") else ""
+        if heading_text == "摘要":
+            in_summary = True
+            continue
+        if line.startswith("#") and in_summary:
+            break
+        if in_summary and line:
+            summary_lines.append(_strip_lightweight_markdown(line))
+
+    lines = [
+        _strip_lightweight_markdown(title),
+        "",
+        "摘要",
+        "\n".join(summary_lines) if summary_lines else "最近三天没有通知。",
+    ]
+
+    if notices:
+        lines.extend(["", "涉及通知"])
+        for index, item in enumerate(notices, start=1):
+            lines.extend([f"{index}. {item.title}", item.url])
+    else:
+        markdown_notices = _extract_notice_lines_from_markdown(markdown)
+        if markdown_notices:
+            lines.extend(["", "涉及通知"])
+            for index, (title, url) in enumerate(markdown_notices, start=1):
+                lines.extend([f"{index}. {title}", url])
+
     return "\n".join(lines).strip() + "\n"
 
 
@@ -279,9 +349,13 @@ def save_delivery_record(
     warning_emitted: bool = False,
     backfilled: bool = False,
     now: datetime | None = None,
+    napcat_sent: bool | None = None,
+    napcat_error: str | None = None,
+    napcat_target_results: list[dict[str, object]] | None = None,
 ) -> None:
+    existing = store.get_record(target_date.date().isoformat(), slot) or {}
     timestamp = (now or datetime.now()).isoformat()
-    sent_at = timestamp if email_sent else ""
+    sent_at = timestamp if email_sent else str(existing.get("sent_at", ""))
     store.record(
         DeliveryRecord(
             date=target_date.date().isoformat(),
@@ -294,6 +368,18 @@ def save_delivery_record(
             sent_at=sent_at,
             updated_at=timestamp,
             backfilled=backfilled,
+            napcat_sent=
+                bool(existing.get("napcat_sent", False))
+                if napcat_sent is None
+                else napcat_sent,
+            napcat_error=
+                str(existing.get("napcat_error", ""))
+                if napcat_error is None
+                else napcat_error,
+            napcat_target_results=
+                existing.get("napcat_target_results", [])
+                if napcat_target_results is None
+                else napcat_target_results,
         )
     )
 
@@ -358,6 +444,8 @@ def process_evening_delivery(
         write_summary_file_fn=write_summary_file,
         build_email_subject_fn=build_email_subject,
         send_email_fn=send_email,
+        send_napcat_message_fn=send_napcat_message,
+        build_napcat_news_message_fn=build_napcat_news_message,
         save_delivery_record_fn=save_delivery_record,
     )
 
@@ -375,8 +463,17 @@ def retry_failed_deliveries_for_today(
     evening = store.get_record(today, "evening")
     if (
         evening
-        and evening.get("status") == "failed"
-        and not bool(evening.get("email_sent"))
+        and (
+            (
+                evening.get("status") == "failed"
+                and not bool(evening.get("email_sent"))
+            )
+            or (
+                settings.enable_napcat_service
+                and bool(evening.get("email_sent"))
+                and not bool(evening.get("napcat_sent"))
+            )
+        )
     ):
         attempted.add("evening")
         process_evening_delivery(settings, store, now)

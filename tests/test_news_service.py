@@ -73,7 +73,7 @@ def test_process_news_delivery_safely_rejects_unknown_slot(tmp_path: Path):
     )
 
     assert calls == []
-    assert printed == ["[WARN] 新闻邮件流程失败: 不支持的新闻投递时段: afternoon"]
+    assert printed[-1] == "[WARN] 新闻邮件流程失败: 不支持的新闻投递时段: afternoon"
     assert saved["args"] == (
         store,
         datetime(2026, 3, 20, 0, 0),
@@ -158,6 +158,8 @@ def test_process_evening_delivery_uses_injected_summary_writer(tmp_path: Path):
         write_summary_file_fn=write_summary_file,
         build_email_subject_fn=build_email_subject,
         send_email_fn=send_email,
+        send_napcat_message_fn=lambda *_args: None,
+        build_napcat_news_message_fn=lambda _markdown, _items: "unused",
         save_delivery_record_fn=save_delivery_record,
         print_fn=printed.append,
     )
@@ -175,11 +177,406 @@ def test_process_evening_delivery_uses_injected_summary_writer(tmp_path: Path):
         True,
         "sent",
     )
-    assert saved["kwargs"] == {"now": now}
-    assert printed == [
-        "邮件已发送到: receiver@example.com",
-        f"\n已写入: {output_path}",
+    assert saved["kwargs"] == {
+        "warning_emitted": False,
+        "now": now,
+        "napcat_sent": False,
+        "napcat_error": "",
+        "napcat_target_results": [],
+    }
+    assert printed[-2:] == ["邮件已发送到: receiver@example.com", f"\n已写入: {output_path}"]
+
+
+def test_process_evening_delivery_sends_napcat_to_all_targets_when_enabled(
+    tmp_path: Path,
+):
+    settings = make_settings(tmp_path)
+    settings.enable_napcat_service = True
+    settings.napcat_targets = ["group:123456", "private:987654"]
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 0)
+    notices = [
+        NoticeItem(
+            title="new notice",
+            url="https://example.com/new",
+            publish_time=datetime(2026, 3, 20, 17, 30),
+        )
     ]
+    napcat_calls: list[tuple[str, str]] = []
+
+    store.record(
+        DeliveryRecord(
+            date="2026-03-20",
+            slot="noon",
+            summary_path=str(tmp_path / "summary_20260320.md"),
+            email_sent=True,
+            notice_urls=[],
+            status="sent",
+        )
+    )
+
+    process_evening_delivery(
+        settings,
+        store,
+        now,
+        get_summary_file_path_for_date_fn=lambda *_args, **_kwargs: tmp_path / "unused.md",
+        collect_notices_for_date_fn=lambda *_args: notices,
+        build_notice_outputs_fn=lambda *_args: (
+            "# 本科生院最近三天通知总结\n\n## 摘要\n\n1. **new notice**\n",
+            "body",
+            "<p>body</p>",
+            notices,
+            [notices[0].url],
+        ),
+        write_summary_file_fn=lambda *_args, **_kwargs: tmp_path / "summary_20260320_evening.md",
+        build_email_subject_fn=lambda *_args: "subject",
+        send_email_fn=lambda *_args: None,
+        send_napcat_message_fn=lambda _settings, target, message: napcat_calls.append(
+            (target, message)
+        ),
+        build_napcat_news_message_fn=lambda markdown, items: (
+            f"qq::{len(items)}::{markdown.splitlines()[-1]}"
+        ),
+        save_delivery_record_fn=lambda *args, **kwargs: None,
+    )
+
+    assert napcat_calls == [
+        ("group:123456", "qq::1::1. **new notice**"),
+        ("private:987654", "qq::1::1. **new notice**"),
+    ]
+
+
+def test_process_evening_delivery_records_partial_napcat_failures(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    settings.enable_napcat_service = True
+    settings.napcat_targets = ["group:123456", "private:987654"]
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 0)
+    saved: dict[str, object] = {}
+    notices = [
+        NoticeItem(
+            title="new notice",
+            url="https://example.com/new",
+            publish_time=datetime(2026, 3, 20, 17, 30),
+        )
+    ]
+
+    def fake_send_napcat(_settings: Settings, target: str, _message: str) -> None:
+        if target == "group:123456":
+            raise RuntimeError("timeout")
+
+    process_evening_delivery(
+        settings,
+        store,
+        now,
+        get_summary_file_path_for_date_fn=lambda *_args, **_kwargs: tmp_path / "unused.md",
+        collect_notices_for_date_fn=lambda *_args: notices,
+        build_notice_outputs_fn=lambda *_args: (
+            "# 本科生院最近三天通知总结\n\n## 摘要\n\n1. **new notice**\n",
+            "body",
+            "<p>body</p>",
+            notices,
+            [notices[0].url],
+        ),
+        write_summary_file_fn=lambda *_args, **_kwargs: tmp_path / "summary_20260320_evening.md",
+        build_email_subject_fn=lambda *_args: "subject",
+        send_email_fn=lambda *_args: None,
+        send_napcat_message_fn=fake_send_napcat,
+        build_napcat_news_message_fn=lambda markdown, items: (
+            f"qq::{len(items)}::{markdown.splitlines()[-1]}"
+        ),
+        save_delivery_record_fn=lambda *args, **kwargs: saved.update(
+            {"args": args, "kwargs": kwargs}
+        ),
+    )
+
+    assert saved["kwargs"]["napcat_sent"] is False
+    assert saved["kwargs"]["napcat_error"] == "group:123456: timeout"
+    assert saved["kwargs"]["napcat_target_results"] == [
+        {"target": "group:123456", "sent": False, "error": "timeout"},
+        {"target": "private:987654", "sent": True, "error": ""},
+    ]
+    assert saved["args"][6] == "sent"
+
+
+def test_process_evening_delivery_still_attempts_napcat_after_email_failure(
+    tmp_path: Path,
+):
+    settings = make_settings(tmp_path)
+    settings.enable_napcat_service = True
+    settings.napcat_targets = ["group:123456"]
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 0)
+    napcat_calls: list[tuple[str, str]] = []
+    saved: dict[str, object] = {}
+    notices = [
+        NoticeItem(
+            title="new notice",
+            url="https://example.com/new",
+            publish_time=datetime(2026, 3, 20, 17, 30),
+        )
+    ]
+
+    process_evening_delivery(
+        settings,
+        store,
+        now,
+        get_summary_file_path_for_date_fn=lambda *_args, **_kwargs: tmp_path / "unused.md",
+        collect_notices_for_date_fn=lambda *_args: notices,
+        build_notice_outputs_fn=lambda *_args: (
+            "# 本科生院最近三天通知总结\n\n## 摘要\n\n1. **new notice**\n",
+            "body",
+            "<p>body</p>",
+            notices,
+            [notices[0].url],
+        ),
+        write_summary_file_fn=lambda *_args, **_kwargs: tmp_path / "summary_20260320_evening.md",
+        build_email_subject_fn=lambda *_args: "subject",
+        send_email_fn=lambda *_args: (_ for _ in ()).throw(RuntimeError("smtp down")),
+        send_napcat_message_fn=lambda _settings, target, message: napcat_calls.append(
+            (target, message)
+        ),
+        build_napcat_news_message_fn=lambda markdown, items: (
+            f"qq::{len(items)}::{markdown.splitlines()[-1]}"
+        ),
+        save_delivery_record_fn=lambda *args, **kwargs: saved.update(
+            {"args": args, "kwargs": kwargs}
+        ),
+    )
+
+    assert napcat_calls == [("group:123456", "qq::1::1. **new notice**")]
+    assert saved["kwargs"]["napcat_sent"] is True
+    assert saved["args"][5] is False
+    assert saved["args"][6] == "sent"
+
+
+def test_process_evening_delivery_skips_when_napcat_only_success_already_recorded(
+    tmp_path: Path,
+):
+    settings = make_settings(tmp_path)
+    settings.enable_napcat_service = True
+    settings.napcat_targets = ["group:123456"]
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 5)
+    calls: list[str] = []
+    printed: list[str] = []
+
+    store.record(
+        DeliveryRecord(
+            date="2026-03-20",
+            slot="evening",
+            summary_path=str(tmp_path / "summary_20260320_evening.md"),
+            email_sent=False,
+            notice_urls=["https://example.com/new"],
+            status="sent",
+            napcat_sent=True,
+            napcat_target_results=[
+                {"target": "group:123456", "sent": True, "error": ""}
+            ],
+        )
+    )
+
+    process_evening_delivery(
+        settings,
+        store,
+        now,
+        get_summary_file_path_for_date_fn=lambda *_args, **_kwargs: tmp_path / "unused.md",
+        collect_notices_for_date_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("should not recollect notices")
+        ),
+        build_notice_outputs_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("should not rebuild outputs")
+        ),
+        write_summary_file_fn=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not rewrite summary")
+        ),
+        build_email_subject_fn=lambda *_args: "subject",
+        send_email_fn=lambda *_args: calls.append("email"),
+        send_napcat_message_fn=lambda *_args: calls.append("napcat"),
+        build_napcat_news_message_fn=lambda *_args: "unused",
+        save_delivery_record_fn=lambda *_args, **_kwargs: calls.append("save"),
+        print_fn=printed.append,
+    )
+
+    assert calls == []
+    assert printed[-1] == "当天晚间通知已成功发送，跳过重复发送"
+
+
+def test_process_evening_delivery_retries_only_failed_napcat_targets_after_email_success(
+    tmp_path: Path,
+):
+    settings = make_settings(tmp_path)
+    settings.enable_napcat_service = True
+    settings.napcat_targets = ["group:123456", "private:987654"]
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 18, 5)
+    summary_path = tmp_path / "summary_20260320_evening.md"
+    summary_path.write_text(
+        "# 本科生院最近三天通知总结\n\n"
+        "## 摘要\n\n"
+        "1. **new notice**\n\n"
+        "## 涉及通知\n\n"
+        "- `2026-03-20` [new notice](https://example.com/new)\n",
+        encoding="utf-8",
+    )
+    napcat_calls: list[tuple[str, str]] = []
+    printed: list[str] = []
+
+    store.record(
+        DeliveryRecord(
+            date="2026-03-20",
+            slot="evening",
+            summary_path=str(summary_path),
+            email_sent=True,
+            notice_urls=["https://example.com/new"],
+            status="sent",
+            napcat_sent=False,
+            napcat_error="group:123456: timeout",
+            napcat_target_results=[
+                {"target": "group:123456", "sent": False, "error": "timeout"},
+                {"target": "private:987654", "sent": True, "error": ""},
+            ],
+        )
+    )
+
+    process_evening_delivery(
+        settings,
+        store,
+        now,
+        get_summary_file_path_for_date_fn=lambda *_args, **_kwargs: tmp_path / "unused.md",
+        collect_notices_for_date_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("should not recollect notices")
+        ),
+        build_notice_outputs_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("should not rebuild outputs")
+        ),
+        write_summary_file_fn=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not rewrite summary")
+        ),
+        build_email_subject_fn=lambda *_args: "subject",
+        send_email_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("should not resend email")
+        ),
+        send_napcat_message_fn=lambda _settings, target, message: napcat_calls.append(
+            (target, message)
+        ),
+        build_napcat_news_message_fn=lambda markdown, items: (
+            f"qq::{len(items)}::{markdown.splitlines()[-1]}"
+        ),
+        save_delivery_record_fn=lambda *_args, **_kwargs: None,
+        print_fn=printed.append,
+    )
+
+    assert napcat_calls == [
+        ("group:123456", "qq::0::- `2026-03-20` [new notice](https://example.com/new)")
+    ]
+    assert "当天晚间邮件已成功发送，跳过重复发送" in printed
+
+
+def test_process_evening_delivery_retries_pending_napcat_with_existing_summary_when_no_new_notices(
+    tmp_path: Path,
+):
+    settings = make_settings(tmp_path)
+    settings.enable_napcat_service = True
+    settings.napcat_targets = ["group:123456", "private:987654"]
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 19, 0)
+    summary_path = tmp_path / "summary_20260320_evening.md"
+    summary_path.write_text(
+        "# 本科生院最近三天通知总结\n\n"
+        "## 摘要\n\n"
+        "1. **new notice**\n\n"
+        "## 涉及通知\n\n"
+        "- `2026-03-20` [new notice](https://example.com/new)\n",
+        encoding="utf-8",
+    )
+    napcat_calls: list[tuple[str, str]] = []
+    saved: dict[str, object] = {}
+    printed: list[str] = []
+
+    store.record(
+        DeliveryRecord(
+            date="2026-03-20",
+            slot="evening",
+            summary_path=str(summary_path),
+            email_sent=True,
+            notice_urls=["https://example.com/new"],
+            status="sent",
+            napcat_sent=False,
+            napcat_error="group:123456: timeout",
+            napcat_target_results=[
+                {"target": "group:123456", "sent": False, "error": "timeout"},
+                {"target": "private:987654", "sent": True, "error": ""},
+            ],
+        )
+    )
+
+    process_evening_delivery(
+        settings,
+        store,
+        now,
+        get_summary_file_path_for_date_fn=lambda *_args, **_kwargs: tmp_path / "unused.md",
+        collect_notices_for_date_fn=lambda *_args: [],
+        build_notice_outputs_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("should not rebuild outputs")
+        ),
+        write_summary_file_fn=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not rewrite summary")
+        ),
+        build_email_subject_fn=lambda *_args: "subject",
+        send_email_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("should not resend email")
+        ),
+        send_napcat_message_fn=lambda _settings, target, message: napcat_calls.append(
+            (target, message)
+        ),
+        build_napcat_news_message_fn=lambda markdown, items: (
+            f"qq::{len(items)}::{markdown.splitlines()[-1]}"
+        ),
+        save_delivery_record_fn=lambda *args, **kwargs: saved.update(
+            {"args": args, "kwargs": kwargs}
+        ),
+        print_fn=printed.append,
+    )
+
+    assert napcat_calls == [("group:123456", "qq::0::- `2026-03-20` [new notice](https://example.com/new)")]
+    assert saved["args"][5] is True
+    assert saved["args"][6] == "sent"
+    assert saved["kwargs"]["napcat_sent"] is True
+    assert printed[-1] == f"\n已写入: {summary_path}"
+
+
+def test_process_noon_delivery_never_sends_napcat(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    store = DeliveryStateStore(tmp_path / "state.json")
+    now = datetime(2026, 3, 20, 12, 0)
+    notices = [
+        NoticeItem(
+            title="new notice",
+            url="https://example.com/new",
+            publish_time=datetime(2026, 3, 20, 11, 30),
+        )
+    ]
+
+    process_noon_delivery(
+        settings,
+        store,
+        now,
+        get_summary_file_path_for_date_fn=lambda *_args, **_kwargs: tmp_path / "summary.md",
+        collect_notices_for_date_fn=lambda *_args: notices,
+        trim_notices_to_cutoff_fn=lambda items, *_args: items,
+        build_notice_outputs_fn=lambda *_args: (
+            "# summary\n",
+            "body",
+            "<p>body</p>",
+            notices,
+            [notices[0].url],
+        ),
+        write_summary_file_fn=lambda *_args, **_kwargs: tmp_path / "summary.md",
+        build_email_subject_fn=lambda *_args: "subject",
+        send_email_fn=lambda *_args: None,
+        save_delivery_record_fn=lambda *_args, **_kwargs: None,
+    )
 
 
 def test_process_noon_delivery_records_written_summary_path_on_send_failure(
@@ -266,7 +663,4 @@ def test_process_noon_delivery_records_written_summary_path_on_send_failure(
         "warning_emitted": True,
         "now": now,
     }
-    assert printed == [
-        "[WARN] 邮件发送失败: smtp down",
-        f"\n已写入: {output_path}",
-    ]
+    assert printed[-2:] == ["[WARN] 邮件发送失败: smtp down", f"\n已写入: {output_path}"]

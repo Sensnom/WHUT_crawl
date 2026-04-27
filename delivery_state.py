@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
@@ -26,6 +26,9 @@ class DeliveryRecord:
     sent_at: str = ""
     updated_at: str = ""
     backfilled: bool = False
+    napcat_sent: bool = False
+    napcat_error: str = ""
+    napcat_target_results: list[dict[str, object]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -39,6 +42,9 @@ class DeliveryRecord:
             "sent_at": self.sent_at,
             "updated_at": self.updated_at,
             "backfilled": self.backfilled,
+            "napcat_sent": self.napcat_sent,
+            "napcat_error": self.napcat_error,
+            "napcat_target_results": self.napcat_target_results,
         }
 
 

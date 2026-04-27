@@ -188,6 +188,45 @@ def test_settings_can_validate_healthcheck_without_mail_credentials(monkeypatch)
     Settings.validate_for_mode(settings, "healthcheck")
 
 
+def test_settings_healthcheck_still_requires_napcat_fields_when_enabled(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_NAPCAT_SERVICE", "true")
+    monkeypatch.setenv("NAPCAT_BASE_URL", "http://localhost:3000")
+    monkeypatch.delenv("NAPCAT_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("NAPCAT_TARGETS", raising=False)
+
+    settings = Settings.from_env(validate=False)
+
+    with pytest.raises(ValueError, match="NAPCAT"):
+        Settings.validate_for_mode(settings, "healthcheck")
+
+
+def test_settings_allow_blank_napcat_fields_when_service_disabled(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_NAPCAT_SERVICE", "false")
+    monkeypatch.delenv("NAPCAT_BASE_URL", raising=False)
+    monkeypatch.delenv("NAPCAT_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("NAPCAT_TARGETS", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.enable_napcat_service is False
+    assert settings.napcat_base_url == ""
+    assert settings.napcat_access_token == ""
+    assert settings.napcat_targets == []
+
+
+def test_settings_require_napcat_fields_when_enabled(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_NAPCAT_SERVICE", "true")
+    monkeypatch.delenv("NAPCAT_BASE_URL", raising=False)
+    monkeypatch.delenv("NAPCAT_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("NAPCAT_TARGETS", raising=False)
+
+    with pytest.raises(ValueError, match="NAPCAT"):
+        Settings.from_env()
+
+
 def test_settings_reads_chaoxing_fields(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("CHAOXING_USERNAME", "13800000000")
@@ -201,3 +240,40 @@ def test_settings_reads_chaoxing_fields(monkeypatch):
     assert settings.chaoxing_password == "secret"
     assert settings.chaoxing_target_course_names == ["高数", "大学物理"]
     assert settings.enable_chaoxing_service is True
+
+
+def test_settings_reads_napcat_fields(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_NAPCAT_SERVICE", "true")
+    monkeypatch.setenv("NAPCAT_BASE_URL", "http://localhost:3000")
+    monkeypatch.setenv("NAPCAT_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("NAPCAT_TARGETS", "group:123456,private:987654")
+
+    settings = Settings.from_env()
+
+    assert settings.enable_napcat_service is True
+    assert settings.napcat_base_url == "http://localhost:3000"
+    assert settings.napcat_access_token == "token"
+    assert settings.napcat_targets == ["group:123456", "private:987654"]
+
+
+def test_settings_rejects_invalid_napcat_target(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_NAPCAT_SERVICE", "true")
+    monkeypatch.setenv("NAPCAT_BASE_URL", "http://localhost:3000")
+    monkeypatch.setenv("NAPCAT_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("NAPCAT_TARGETS", "channel:123456")
+
+    with pytest.raises(ValueError, match="NAPCAT_TARGETS"):
+        Settings.from_env()
+
+
+def test_settings_rejects_non_numeric_napcat_target_id(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_NAPCAT_SERVICE", "true")
+    monkeypatch.setenv("NAPCAT_BASE_URL", "http://localhost:3000")
+    monkeypatch.setenv("NAPCAT_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("NAPCAT_TARGETS", "group:not-a-qq")
+
+    with pytest.raises(ValueError, match="NAPCAT_TARGETS"):
+        Settings.from_env()
