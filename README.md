@@ -95,9 +95,9 @@ ENABLE_COURSE_SERVICE=true  # 课程任务邮件（开/关）
 
 # ========== NapCat QQ 晚间推送 ==========
 ENABLE_NAPCAT_SERVICE=false
-NAPCAT_BASE_URL=http://localhost:3000
-NAPCAT_ACCESS_TOKEN=your_token
-NAPCAT_TARGETS=group:123456789,private:987654321
+NAPCAT_BASE_URL=http://localhost:8095        # 本地直接跑用 localhost，树莓派远程用 http://<树莓派IP>:8095
+NAPCAT_ACCESS_TOKEN=your_napcat_websocket_token  # onebot11.json 里的 WebSocket token，不是 WebUI token
+NAPCAT_TARGETS=group:123456789,private:987654321  # 格式：group:<群号> 或 private:<QQ号>，逗号分隔
 ```
 
 ---
@@ -116,6 +116,47 @@ NAPCAT_TARGETS=group:123456789,private:987654321
 ### NapCat QQ 晚间推送
 
 晚间新闻摘要可选接入 NapCat 推送到 QQ。该配置只用于 `18:00` 的本科生院新闻摘要，不影响中午新闻邮件、补发邮件或课程任务邮件。`NAPCAT_TARGETS` 需使用 `group:<id>` 或 `private:<id>` 语法，多个目标用逗号分隔。
+
+#### NapCat 部署（Docker）
+
+推荐使用 [mlikiowa/napcat-docker](https://github.com/mlikiowa/napcat-docker)：
+
+```bash
+docker run -d \
+  --name napcat \
+  --restart unless-stopped \
+  -p 8095:8095 \
+  -e ACCOUNT=你的QQ号 \
+  -e MODE=reverse \
+  mlikiowa/napcat-docker:latest
+```
+
+#### NapCat 配置
+
+1. 启动后访问 `http://<IP>:6099` 进入 WebUI，配置 QQ 账号登录
+2. 在 NapCat 配置中找到 `onebot11.json`，记录 WebSocket 的 `token`（不是 WebUI token）
+3. 确保 `onebot11.json` 中 `network.websocketServers[0].port` 为 `8095`
+4. NapCat 需要开放 `8095` 端口供外部访问（Docker 端口映射 `-p 8095:8095`）
+
+#### 远程访问（SSH 隧道）
+
+如果 NapCat 在树莓派上，本地从树莓派接收 QQ 消息：
+
+```bash
+# SSH 隧道转发
+ssh -L 8095:localhost:8095 pi@<树莓派IP>
+
+# .env 配置
+NAPCAT_BASE_URL=http://localhost:8095
+NAPCAT_ACCESS_TOKEN=<onebot11.json 里的 websocket token>
+```
+
+如果 NapCat 在云服务器上，直接配置公网 IP：
+
+```bash
+NAPCAT_BASE_URL=http://<服务器IP>:8095
+NAPCAT_ACCESS_TOKEN=<onebot11.json 里的 websocket token>
+```
 
 ---
 
@@ -196,6 +237,7 @@ WHUT_crawl/
 ├── parser.py                # 页面解析
 ├── summarizer.py            # DeepSeek 摘要
 ├── email_sender.py          # 邮件发送
+├── napcat_sender.py         # NapCat QQ 推送（WebSocket）
 ├── course_client.py         # Smart WHUT 课程
 ├── mooc_client.py           # 小雅课程平台
 ├── chaoxing_client.py       # 超星学习通
@@ -205,9 +247,9 @@ WHUT_crawl/
 │   └── healthcheck.py       # 健康检查
 ├── services/
 │   ├── news_service.py      # 新闻发送逻辑
-│   ├── course_service.py     # 课程任务逻辑
+│   ├── course_service.py    # 课程任务逻辑
 │   ├── backfill_service.py  # 补发逻辑
-│   └── cleanup_service.py    # 状态清理
+│   └── cleanup_service.py   # 状态清理
 └── scheduler/
-    └── manage_systemd.py     # systemd 安装脚本
+    └── manage_systemd.py    # systemd 安装脚本
 ```
